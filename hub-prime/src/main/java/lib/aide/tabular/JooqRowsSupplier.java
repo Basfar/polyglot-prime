@@ -1,7 +1,9 @@
 package lib.aide.tabular;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import org.jooq.Condition;
 import org.jooq.DSLContext;
@@ -18,6 +20,7 @@ import org.techbd.util.NoOpUtils;
 
 import jakarta.annotation.Nonnull;
 import jakarta.annotation.Nullable;
+import lib.aide.tabular.TabularRowsRequest.ColumnVO;
 
 public final class JooqRowsSupplier implements TabularRowsSupplier<JooqRowsSupplier.JooqProvenance> {
     public record TypableTable(Table<?> table, boolean stronglyTyped) {
@@ -185,6 +188,52 @@ public final class JooqRowsSupplier implements TabularRowsSupplier<JooqRowsSuppl
                     selectFields.add(aggregationField);
                 });
             });
+        }
+
+                 //Add Pivot
+        if (request.pivotMode() && !request.pivotCols().isEmpty()) {
+            ColumnVO pivotColumn = request.pivotCols().get(0);
+            String pivotField = pivotColumn.field();
+            String valueField = request.valueCols().get(1).field(); 
+            String groupByField = request.valueCols().get(0).field(); 
+
+            // Keep existing select fields, but remove the pivot and value fields
+            selectFields.removeIf(field -> field.getName().equals(pivotField) || field.getName().equals(valueField));
+
+            // Ensure the groupByField is in the select fields
+            if (selectFields.stream().noneMatch(field -> field.getName().equals(groupByField))) {
+                selectFields.add(0, typableTable.column(groupByField));
+            }
+
+            // Extract pivot values from the displayName of the pivot column
+            List<String> pivotValues = Arrays.asList(pivotColumn.displayName().split(","));
+
+            for (String pivotValue : pivotValues) {
+                Field<?> pivotedField = DSL.max(DSL.case_()
+                .when(typableTable.column(pivotField).eq(DSL.inline(pivotValue.trim())), typableTable.column(valueField))
+                .else_(DSL.inline((Object) null)))
+                .as(pivotValue.trim());
+                selectFields.add(pivotedField);
+            }
+
+            // Update grouping fields
+            groupByFields.clear();
+            groupByFields.addAll(selectFields.stream()
+                                .filter(field -> !pivotValues.contains(field.getName()))
+                                .collect(Collectors.toList()));
+        } else {
+            // If not in pivot mode, keep the existing logic
+            if (request.rowGroupCols() != null) {
+                request.rowGroupCols().forEach(col -> {
+                    Field<?> field = typableTable.column(col.field());
+                    if (!groupByFields.contains(field)) {
+                        groupByFields.add(field);
+                    }
+                    if (!selectFields.contains(field)) {
+                        selectFields.add(field);
+                    }
+                });
+            }
         }
 
         // Creating the base query
