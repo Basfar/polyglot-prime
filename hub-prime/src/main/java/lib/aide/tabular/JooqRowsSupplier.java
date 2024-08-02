@@ -115,18 +115,15 @@ public final class JooqRowsSupplier implements TabularRowsSupplier<JooqRowsSuppl
                     e.getMessage());
         }
     }
-
     public JooqQuery query() {
         final var selectFields = new ArrayList<Field<?>>();
         final var whereConditions = new ArrayList<Condition>();
         final var bindValues = new ArrayList<Object>();
         final var sortFields = new ArrayList<SortField<?>>();
         final var groupByFields = new ArrayList<Field<?>>();
-
+    
         // Check if groupKeys are available
         if (request.groupKeys() != null && !request.groupKeys().isEmpty()) {
-            // Adding the select field '*'
-            selectFields.add(DSL.field("*"));
             // Adding where conditions based on groupKeys and rowGroupCols
             for (int i = 0; i < request.rowGroupCols().size(); i++) {
                 final var col = request.rowGroupCols().get(i);
@@ -144,13 +141,13 @@ public final class JooqRowsSupplier implements TabularRowsSupplier<JooqRowsSuppl
                     selectFields.add(field);
                 });
             }
-
+    
             // Adding columns to select if no grouping
             if (groupByFields.isEmpty() && request.valueCols() != null) {
                 request.valueCols().forEach(col -> selectFields.add(typableTable.column(col.field())));
             }
         }
-
+    
         // Adding filters
         if (request.filterModel() != null) {
             request.filterModel().forEach((field, filter) -> {
@@ -159,7 +156,7 @@ public final class JooqRowsSupplier implements TabularRowsSupplier<JooqRowsSuppl
                 bindValues.add(filter.filter());
             });
         }
-
+    
         // Adding sorting
         if (request.sortModel() != null) {
             for (final var sort : request.sortModel()) {
@@ -172,7 +169,7 @@ public final class JooqRowsSupplier implements TabularRowsSupplier<JooqRowsSuppl
                 }
             }
         }
-
+    
         // Adding aggregations
         if (request.aggregationFunctions() != null) {
             request.aggregationFunctions().forEach(aggFunc -> {
@@ -189,25 +186,25 @@ public final class JooqRowsSupplier implements TabularRowsSupplier<JooqRowsSuppl
                 });
             });
         }
-
-                 //Add Pivot
+    
+        //Add Pivot
         if (request.pivotMode() && !request.pivotCols().isEmpty()) {
             ColumnVO pivotColumn = request.pivotCols().get(0);
             String pivotField = pivotColumn.field();
             String valueField = request.valueCols().get(1).field(); 
             String groupByField = request.valueCols().get(0).field(); 
-
+    
             // Keep existing select fields, but remove the pivot and value fields
             selectFields.removeIf(field -> field.getName().equals(pivotField) || field.getName().equals(valueField));
-
+    
             // Ensure the groupByField is in the select fields
             if (selectFields.stream().noneMatch(field -> field.getName().equals(groupByField))) {
                 selectFields.add(0, typableTable.column(groupByField));
             }
-
+    
             // Extract pivot values from the displayName of the pivot column
             List<String> pivotValues = Arrays.asList(pivotColumn.displayName().split(","));
-
+    
             for (String pivotValue : pivotValues) {
                 Field<?> pivotedField = DSL.max(DSL.case_()
                 .when(typableTable.column(pivotField).eq(DSL.inline(pivotValue.trim())), typableTable.column(valueField))
@@ -215,7 +212,7 @@ public final class JooqRowsSupplier implements TabularRowsSupplier<JooqRowsSuppl
                 .as(pivotValue.trim());
                 selectFields.add(pivotedField);
             }
-
+    
             // Update grouping fields
             groupByFields.clear();
             groupByFields.addAll(selectFields.stream()
@@ -235,18 +232,21 @@ public final class JooqRowsSupplier implements TabularRowsSupplier<JooqRowsSuppl
                 });
             }
         }
-
+    
         // Creating the base query
         final var limit = request.endRow() - request.startRow();
-        final var select = !groupByFields.isEmpty()
-                ? this.dsl.select(selectFields).from(typableTable.table()).where(whereConditions).groupBy(groupByFields)
+        final var select = request.groupKeys() != null && !request.groupKeys().isEmpty()
+                ? this.dsl.select(DSL.field("*")).from(typableTable.table()).where(whereConditions)
                         .orderBy(sortFields).limit(request.startRow(), limit)
-                : this.dsl.select(selectFields).from(typableTable.table()).where(whereConditions).orderBy(sortFields)
-                        .limit(request.startRow(), limit);
-
+                : !groupByFields.isEmpty()
+                        ? this.dsl.select(selectFields).from(typableTable.table()).where(whereConditions).groupBy(groupByFields)
+                                .orderBy(sortFields).limit(request.startRow(), limit)
+                        : this.dsl.select(selectFields).from(typableTable.table()).where(whereConditions).orderBy(sortFields)
+                                .limit(request.startRow(), limit);
+    
         bindValues.add(request.startRow());
         bindValues.add(limit);
-
+    
         return new JooqQuery(select, bindValues, typableTable.stronglyTyped());
     }
 
